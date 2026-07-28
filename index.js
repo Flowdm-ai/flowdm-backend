@@ -9,13 +9,13 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Console Logger
+// Request Logger
 app.use((req, res, next) => {
     console.log(`[LOG] ${req.method} request to ${req.url}`);
     next();
 });
 
-// Cloud Services Initialization
+// Cloud Services
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) 
     ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
     : null;
@@ -23,22 +23,23 @@ const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const aiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
 
-// 1. ROOT ROUTE (Ye 100% text show karega)
+// 1. Root Route
 app.get('/', (req, res) => {
-    res.send("🚀 FlowDM SaaS Engine is Live and Running!");
+    res.status(200).send("🚀 FlowDM SaaS Engine is Live and Running!");
 });
 
-// 2. META OAUTH INIT ROUTE
+// 2. Meta OAuth Start Route
 app.get('/auth/facebook', (req, res) => {
     const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
     const scopes = ['instagram_basic', 'instagram_manage_messages', 'pages_messaging', 'pages_show_list'];
     
     const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${process.env.META_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes.join(',')}&response_type=code`;
     
+    console.log("Redirecting to Meta OAuth URL:", authUrl);
     res.redirect(authUrl);
 });
 
-// 3. META OAUTH CALLBACK ROUTE
+// 3. Meta OAuth Callback Route
 app.get('/auth/facebook/callback', async (req, res) => {
     const { code } = req.query;
     const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
@@ -95,7 +96,7 @@ app.get('/auth/facebook/callback', async (req, res) => {
     }
 });
 
-// 4. WEBHOOK VERIFICATION
+// 4. Webhook Verification
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -107,7 +108,7 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-// 5. WEBHOOK EVENT LISTENER
+// 5. Webhook Listener
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body?.entry?.[0];
