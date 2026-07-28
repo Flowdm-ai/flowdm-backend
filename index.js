@@ -9,13 +9,13 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Request Logger
+// Request Console Logger
 app.use((req, res, next) => {
-    console.log(`[LOG] ${req.method} request to ${req.url}`);
+    console.log(`[INCOMING REQUEST] ${req.method} -> ${req.url}`);
     next();
 });
 
-// Cloud Services
+// Cloud Services Initialization
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) 
     ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
     : null;
@@ -28,21 +28,23 @@ app.get('/', (req, res) => {
     res.status(200).send("🚀 FlowDM SaaS Engine is Live and Running!");
 });
 
-// 2. Meta OAuth Start Route
-app.get('/auth/facebook', (req, res) => {
-    const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
+// 2. Meta OAuth Start Route (Handles both /auth/facebook and /auth/facebook/)
+app.get(['/auth/facebook', '/auth/facebook/'], (req, res) => {
+    const cleanAppUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+    const redirectUri = `${cleanAppUrl}/auth/facebook/callback`;
     const scopes = ['instagram_basic', 'instagram_manage_messages', 'pages_messaging', 'pages_show_list'];
     
     const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${process.env.META_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes.join(',')}&response_type=code`;
     
-    console.log("Redirecting to Meta OAuth URL:", authUrl);
+    console.log("[OAUTH INIT] Redirecting to:", authUrl);
     res.redirect(authUrl);
 });
 
 // 3. Meta OAuth Callback Route
-app.get('/auth/facebook/callback', async (req, res) => {
+app.get(['/auth/facebook/callback', '/auth/facebook/callback/'], async (req, res) => {
     const { code } = req.query;
-    const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
+    const cleanAppUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+    const redirectUri = `${cleanAppUrl}/auth/facebook/callback`;
 
     if (!code) {
         return res.status(400).send("Authorization Code Missing.");
@@ -108,61 +110,10 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-// 5. Webhook Listener
-app.post('/webhook', async (req, res) => {
-    try {
-        const entry = req.body?.entry?.[0];
-        const change = entry?.changes?.[0]?.value;
-
-        if (change && change.text && supabase) {
-            const commentText = change.text;
-            const commenterId = change.from?.id;
-            const recipientBusinessId = entry.id;
-
-            const { data: account } = await supabase
-                .from('instagram_accounts')
-                .select('*')
-                .eq('instagram_business_id', recipientBusinessId)
-                .single();
-
-            if (!account) return res.sendStatus(200);
-
-            const { data: campaign } = await supabase
-                .from('automations')
-                .select('*')
-                .eq('account_id', account.id)
-                .ilike('keyword', commentText.trim())
-                .eq('is_active', true)
-                .single();
-
-            if (campaign) {
-                const gatewayUrl = `https://flowdm.in/gate?lead=${commenterId}&campaign=${campaign.id}`;
-
-                await axios.post(`https://graph.facebook.com/v19.0/me/messages`, {
-                    recipient: { id: commenterId },
-                    message: { text: `${campaign.reply_dm_text}\n\nAccess Link: ${gatewayUrl}` }
-                }, {
-                    headers: { Authorization: `Bearer ${account.access_token}` }
-                });
-
-                if (aiModel) {
-                    await aiModel.generateContent(`Reply to comment "${commentText}" in 3 words in Hinglish encouraging them to check DM.`);
-                }
-
-                await supabase.from('leads').insert({
-                    automation_id: campaign.id,
-                    commenter_insta_id: commenterId,
-                    comment_text: commentText,
-                    gateway_link: gatewayUrl,
-                    status: 'SENT'
-                });
-            }
-        }
-        res.status(200).send('EVENT_RECEIVED');
-    } catch (err) {
-        console.error("Webhook Execution Error:", err.message);
-        res.status(200).send('EVENT_RECEIVED');
-    }
+// 5. Catch-All Route (Aapko exact status batayega screen par)
+app.use((req, res) => {
+    console.log(`[404 NOT FOUND] ${req.method} -> ${req.url}`);
+    res.status(404).send(`⚠️ FlowDM Server active hai, lekin requested URL nahi mila: ${req.url}`);
 });
 
 const PORT = process.env.PORT || 3000;
