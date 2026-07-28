@@ -2,7 +2,7 @@ import express from 'express';
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -11,7 +11,13 @@ app.use(express.json());
 
 // 1. Initialize Cloud Services
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const aiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+// Root Endpoint Check
+app.get('/', (req, res) => {
+    res.send("🚀 FlowDM SaaS Engine is Live and Running!");
+});
 
 // 2. Meta OAuth Endpoint: Initiates Instagram Login
 app.get('/auth/facebook', (req, res) => {
@@ -23,13 +29,12 @@ app.get('/auth/facebook', (req, res) => {
     res.redirect(authUrl);
 });
 
-// 3. Meta OAuth Callback: Exchange Short Token for Long-Lived Token & Save User
+// 3. Meta OAuth Callback
 app.get('/auth/facebook/callback', async (req, res) => {
     const { code } = req.query;
     const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
 
     try {
-        // Exchange Code for Short-Lived Access Token
         const tokenRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
             params: {
                 client_id: process.env.META_CLIENT_ID,
@@ -41,7 +46,6 @@ app.get('/auth/facebook/callback', async (req, res) => {
 
         const shortLivedToken = tokenRes.data.access_token;
 
-        // Exchange for Long-Lived Token (60-day lifecycle)
         const longLivedRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
             params: {
                 grant_type: 'fb_exchange_token',
@@ -53,15 +57,13 @@ app.get('/auth/facebook/callback', async (req, res) => {
 
         const longLivedToken = longLivedRes.data.access_token;
 
-        // Fetch User's Connected Instagram Business ID
         const accountsRes = await axios.get(`https://graph.facebook.com/v19.0/me/accounts?access_token=${longLivedToken}`);
         const pageId = accountsRes.data.data[0]?.id;
 
         const instaRes = await axios.get(`https://graph.facebook.com/v19.0/${pageId}?fields=instagram_business_account&access_token=${longLivedToken}`);
         const instaBusinessId = instaRes.data.instagram_business_account?.id;
 
-        // Save Account Credentials to Database
-        const { data, error } = await supabase
+        await supabase
             .from('instagram_accounts')
             .upsert({
                 instagram_business_id: instaBusinessId,
@@ -99,9 +101,8 @@ app.post('/webhook', async (req, res) => {
         if (change && change.text) {
             const commentText = change.text;
             const commenterId = change.from?.id;
-            const recipientBusinessId = entry.id; // The Creator's Insta Business ID
+            const recipientBusinessId = entry.id;
 
-            // Step A: Lookup Creator's Access Token & Active Campaign from Database
             const { data: account } = await supabase
                 .from('instagram_accounts')
                 .select('*')
@@ -119,10 +120,8 @@ app.post('/webhook', async (req, res) => {
                 .single();
 
             if (campaign) {
-                // Step B: Generate Gateway Link
                 const gatewayUrl = `https://flowdm.in/gate?lead=${commenterId}&campaign=${campaign.id}`;
 
-                // Step C: Send Dynamic DM using Creator's Token
                 await axios.post(`https://graph.facebook.com/v19.0/me/messages`, {
                     recipient: { id: commenterId },
                     message: { text: `${campaign.reply_dm_text}\n\nAccess Link: ${gatewayUrl}` }
@@ -130,13 +129,9 @@ app.post('/webhook', async (req, res) => {
                     headers: { Authorization: `Bearer ${account.access_token}` }
                 });
 
-                // Step D: Generate AI Reply & Post
-                const aiResponse = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: `Reply to comment "${commentText}" in 3 words in Hinglish encouraging them to check DM.`,
-                });
+                const aiResult = await aiModel.generateContent(`Reply to comment "${commentText}" in 3 words in Hinglish encouraging them to check DM.`);
+                const aiReply = aiResult.response.text();
 
-                // Save Lead Record
                 await supabase.from('leads').insert({
                     automation_id: campaign.id,
                     commenter_insta_id: commenterId,
