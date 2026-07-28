@@ -1,24 +1,17 @@
 {
   "name": "flowdm-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "FlowDM SaaS Production Backend Engine",
+  "main": "server.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "@google/genai": "^2.13.0",
-    "axios": "^1.18.1",
-    "body-parser": "^2.3.0",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "pg": "^8.22.0"
-  },
-  "devDependencies": {
-    "ngrok": "^5.0.0-beta.2"
+    "@google/genai": "^0.1.1",
+    "@supabase/supabase-js": "^2.48.0",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
   }
 }
