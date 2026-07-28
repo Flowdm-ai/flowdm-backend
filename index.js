@@ -28,7 +28,7 @@ app.get('/', (req, res) => {
     res.status(200).send("🚀 FlowDM SaaS Engine is Live and Running!");
 });
 
-// 2. Meta OAuth Start Route (Handles both /auth/facebook and /auth/facebook/)
+// 2. Meta OAuth Start Route
 app.get(['/auth/facebook', '/auth/facebook/'], (req, res) => {
     const cleanAppUrl = (process.env.APP_URL || '').replace(/\/$/, '');
     const redirectUri = `${cleanAppUrl}/auth/facebook/callback`;
@@ -98,19 +98,88 @@ app.get(['/auth/facebook/callback', '/auth/facebook/callback/'], async (req, res
     }
 });
 
-// 4. Webhook Verification
-app.get('/webhook', (req, res) => {
+// 4. Webhook Verification (GET)
+app.get(['/webhook', '/webhook/'], (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
     if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
+        console.log("[WEBHOOK VERIFIED] Meta connected successfully!");
         return res.status(200).send(challenge);
     }
     res.sendStatus(403);
 });
 
-// 5. Catch-All Route (Aapko exact status batayega screen par)
+// 5. Webhook Event Receiver (POST) -> Comment & DM Handler
+app.post(['/webhook', '/webhook/'], async (req, res) => {
+    console.log("🔥 [WEBHOOK EVENT RECEIVED]:", JSON.stringify(req.body, null, 2));
+
+    try {
+        const entry = req.body?.entry?.[0];
+        const change = entry?.changes?.[0]?.value;
+
+        if (change && change.text && supabase) {
+            const commentText = change.text;
+            const commenterId = change.from?.id;
+            const recipientBusinessId = entry.id;
+
+            console.log(`💬 Comment Received: "${commentText}" from User ID: ${commenterId}`);
+
+            const { data: account } = await supabase
+                .from('instagram_accounts')
+                .select('*')
+                .eq('instagram_business_id', recipientBusinessId)
+                .single();
+
+            if (!account) {
+                console.log("⚠️ No Instagram Account found in Database for ID:", recipientBusinessId);
+                return res.sendStatus(200);
+            }
+
+            const { data: campaign } = await supabase
+                .from('automations')
+                .select('*')
+                .eq('account_id', account.id)
+                .ilike('keyword', commentText.trim())
+                .eq('is_active', true)
+                .single();
+
+            if (campaign) {
+                console.log(`🎯 Keyword Match Found! Sending DM for campaign: ${campaign.keyword}`);
+
+                const gatewayUrl = `https://flowdm.in/gate?lead=${commenterId}&campaign=${campaign.id}`;
+
+                // Send Automated DM via Meta Graph API
+                await axios.post(`https://graph.facebook.com/v19.0/me/messages`, {
+                    recipient: { id: commenterId },
+                    message: { text: `${campaign.reply_dm_text}\n\nAccess Link: ${gatewayUrl}` }
+                }, {
+                    headers: { Authorization: `Bearer ${account.access_token}` }
+                });
+
+                console.log("✅ Automated DM Sent Successfully!");
+
+                // Insert Lead Record in Database
+                await supabase.from('leads').insert({
+                    automation_id: campaign.id,
+                    commenter_insta_id: commenterId,
+                    comment_text: commentText,
+                    gateway_link: gatewayUrl,
+                    status: 'SENT'
+                });
+            } else {
+                console.log(`ℹ️ Comment "${commentText}" did not match any active automation keyword.`);
+            }
+        }
+        res.status(200).send('EVENT_RECEIVED');
+    } catch (err) {
+        console.error("❌ Webhook Execution Error:", err.response?.data || err.message);
+        res.status(200).send('EVENT_RECEIVED');
+    }
+});
+
+// 6. Catch-All 404 Route
 app.use((req, res) => {
     console.log(`[404 NOT FOUND] ${req.method} -> ${req.url}`);
     res.status(404).send(`⚠️ FlowDM Server active hai, lekin requested URL nahi mila: ${req.url}`);
