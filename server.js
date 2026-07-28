@@ -9,17 +9,26 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 1. Initialize Cloud Services
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const aiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-// Root Endpoint Check
-app.get('/', (req, res) => {
-    res.send("🚀 FlowDM SaaS Engine is Live and Running!");
+// Request Logging Middleware (Console me dikhega ki request aayi)
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} request to ${req.url}`);
+    next();
 });
 
-// 2. Meta OAuth Endpoint: Initiates Instagram Login
+// 1. Initialize Cloud Services (Safely)
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY 
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+    : null;
+
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const aiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
+
+// 2. ROOT ROUTE (Health Check)
+app.get('/', (req, res) => {
+    res.status(200).send("🚀 FlowDM SaaS Engine is Live and Running!");
+});
+
+// 3. META OAUTH INIT ROUTE
 app.get('/auth/facebook', (req, res) => {
     const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
     const scopes = ['instagram_basic', 'instagram_manage_messages', 'pages_messaging', 'pages_show_list'];
@@ -29,10 +38,14 @@ app.get('/auth/facebook', (req, res) => {
     res.redirect(authUrl);
 });
 
-// 3. Meta OAuth Callback
+// 4. META OAUTH CALLBACK ROUTE
 app.get('/auth/facebook/callback', async (req, res) => {
     const { code } = req.query;
     const redirectUri = `${process.env.APP_URL}/auth/facebook/callback`;
+
+    if (!code) {
+        return res.status(400).send("Authorization Code Missing.");
+    }
 
     try {
         const tokenRes = await axios.get(`https://graph.facebook.com/v19.0/oauth/access_token`, {
@@ -63,14 +76,16 @@ app.get('/auth/facebook/callback', async (req, res) => {
         const instaRes = await axios.get(`https://graph.facebook.com/v19.0/${pageId}?fields=instagram_business_account&access_token=${longLivedToken}`);
         const instaBusinessId = instaRes.data.instagram_business_account?.id;
 
-        await supabase
-            .from('instagram_accounts')
-            .upsert({
-                instagram_business_id: instaBusinessId,
-                facebook_page_id: pageId,
-                access_token: longLivedToken,
-                token_expires_at: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-            }, { onConflict: 'instagram_business_id' });
+        if (supabase) {
+            await supabase
+                .from('instagram_accounts')
+                .upsert({
+                    instagram_business_id: instaBusinessId,
+                    facebook_page_id: pageId,
+                    access_token: longLivedToken,
+                    token_expires_at: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+                }, { onConflict: 'instagram_business_id' });
+        }
 
         res.send("🎉 Account Connected Successfully to FlowDM!");
 
@@ -80,7 +95,7 @@ app.get('/auth/facebook/callback', async (req, res) => {
     }
 });
 
-// 4. Webhook Verification Endpoint
+// 5. WEBHOOK VERIFICATION
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -92,13 +107,13 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-// 5. Dynamic SaaS Webhook Event Engine
+// 6. WEBHOOK EVENT LISTENER
 app.post('/webhook', async (req, res) => {
     try {
         const entry = req.body?.entry?.[0];
         const change = entry?.changes?.[0]?.value;
 
-        if (change && change.text) {
+        if (change && change.text && supabase) {
             const commentText = change.text;
             const commenterId = change.from?.id;
             const recipientBusinessId = entry.id;
@@ -129,8 +144,9 @@ app.post('/webhook', async (req, res) => {
                     headers: { Authorization: `Bearer ${account.access_token}` }
                 });
 
-                const aiResult = await aiModel.generateContent(`Reply to comment "${commentText}" in 3 words in Hinglish encouraging them to check DM.`);
-                const aiReply = aiResult.response.text();
+                if (aiModel) {
+                    await aiModel.generateContent(`Reply to comment "${commentText}" in 3 words in Hinglish encouraging them to check DM.`);
+                }
 
                 await supabase.from('leads').insert({
                     automation_id: campaign.id,
